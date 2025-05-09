@@ -1,0 +1,27 @@
+# Django-specific files
+*.log
+*.pot
+*.pyc
+__pycache__/
+local_settings.py
+db.sqlite3
+
+# Virtual environment
+.env
+venv/
+env/
+
+# IDE-specific files
+.idea/
+*.swp
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Static and media files (if managed outside the app)
+static/
+media/
+
+# Coverage data
+.coverage
