@@ -19,9 +19,6 @@ env/
 .DS_Store
 Thumbs.db
 
-# Static and media files (if managed outside the app)
-static/
-media/
 
 # Coverage data
 .coverage
