@@ -1,25 +1,29 @@
-# Django-specific files
-*.log
-*.pot
-*.pyc
+# Byte-compiled / optimized / DLL files
 __pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment folders
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# VS Code, PyCharm, etc.
+.idea/
+.vscode/
+*.swp
+
+# Django-specific
+*.log
 local_settings.py
 db.sqlite3
 hadi_hesab_db.sqlite3
-
-# Virtual environment
-.env
-venv/
-env/
-
-# IDE-specific files
-.idea/
-*.swp
 
 # OS-specific files
 .DS_Store
 Thumbs.db
 
-
-# Coverage data
+# Coverage files
 .coverage
