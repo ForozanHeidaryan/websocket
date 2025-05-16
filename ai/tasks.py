@@ -4,11 +4,6 @@ from ai.models import Customers
 from ai.service.customers_db import CustomersDBService
 from ai.service.predict import PredictCustomersData
 
-
-@shared_task
-def print_hello_world():
-    print("Hello, World!")
-
 @shared_task
 def get_customers_data():
     customers = Customers.objects.all()

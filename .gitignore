@@ -5,6 +5,7 @@
 __pycache__/
 local_settings.py
 db.sqlite3
+hadi_hesab_db.sqlite3
 
 # Virtual environment
 .env
