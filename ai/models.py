@@ -54,6 +54,7 @@ class CustomerData(BaseModel):
 
 
 class TurningPrediction(BaseModel):
+  customer = models.ForeignKey(Customers, on_delete=models.CASCADE)
   turning = models.IntegerField()
   sarfasl = models.TextField()
   account_group = models.CharField(max_length=150)

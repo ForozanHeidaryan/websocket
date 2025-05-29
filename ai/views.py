@@ -10,8 +10,10 @@ from .service.predict import PredictCustomersData
 
 
 class TurningPredictionListView(ListAPIView):
-    queryset = TurningPrediction.objects.all()
     serializer_class = TurningPredictionSerializer
+
+    def get_queryset(self):
+        return TurningPrediction.objects.filter(customer_id=self.kwargs.get('customer_id'))
 
 class ExecuteCustomerDBView(APIView):
     def post(self, request, customer_id):

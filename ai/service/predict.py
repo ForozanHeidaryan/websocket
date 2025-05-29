@@ -16,7 +16,6 @@ class PredictCustomersData:
   def __init__(self):
     self.__customer_data = CustomerData.objects.all()
     self.__model_path = os.path.join(settings.MEDIA_ROOT, "models")
-    print(os.path.join(settings.MEDIA_ROOT, "models"))
     self.stopwords = set(stopwords_list())
     self.stemmer = Stemmer()
     self.normalizer = Normalizer()
@@ -120,7 +119,6 @@ class PredictCustomersData:
       TurningPrediction.objects.bulk_create(objects)
 
   def __get_joblib_file(self, file_name):
-      print(os.path.join(self.__model_path, file_name))
       return joblib.load(os.path.join(self.__model_path, file_name))
 
   def __join_lists_to_string(self, df, column_name):
