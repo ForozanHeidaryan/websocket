@@ -4,8 +4,10 @@ from django.http import HttpResponseRedirect
 from django.urls import path, reverse
 from django.utils.html import format_html
 from django.shortcuts import render, get_object_or_404
+from import_export import resources
+from import_export.admin import ImportExportModelAdmin
 
-from ai.models import Customers, CustomerData
+from ai.models import Customers, CustomerData, Training
 
 
 class CustomersAdminForm(forms.ModelForm):
@@ -80,5 +82,13 @@ class CustomerDataForm(forms.ModelForm):
         model = CustomerData
         fields = ['name']
 
+class TrainingResource(resources.ModelResource):
+    class Meta:
+        model = Training
+        fields = ('id', 'group', 'category', 'sarfasl', 'title')
+
+class TrainingAdmin(ImportExportModelAdmin):
+    resource_class = TrainingResource
 
 admin.site.register(Customers, CustomersAdmin)
+admin.site.register(Training, TrainingAdmin)

@@ -40,7 +40,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'ai.apps.AiConfig',
     'rest_framework',
-    'django_celery_beat'
+    'django_celery_beat',
+    'import_export',
 ]
 
 MIDDLEWARE = [
@@ -140,6 +141,11 @@ CELERY_BEAT_SCHEDULE = {
     'predict_customer_data': {
         'task': 'ai.tasks.predict_customer_data',
         'schedule': crontab(hour=5, minute=0),  # every night at 3 am
+    },
+
+    'create_training_files': {
+        'task': 'ai.tasks.train_model_files',
+        'schedule': crontab(hour=4, minute=0),  # every night at 3 am
     },
 }
 

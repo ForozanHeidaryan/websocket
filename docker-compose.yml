@@ -11,6 +11,7 @@ services:
       restart: always
       depends_on:
         - redis
+
   redis:
     image: redis
     container_name: redis

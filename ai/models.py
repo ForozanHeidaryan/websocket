@@ -60,3 +60,9 @@ class TurningPrediction(BaseModel):
   account_group = models.CharField(max_length=150)
   similarity = models.FloatField()
   title = models.TextField()
+
+class Training(BaseModel):
+  group = models.CharField(max_length=150)
+  category = models.IntegerField()
+  sarfasl = models.CharField(max_length=250)
+  title = models.CharField(max_length=250)
