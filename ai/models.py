@@ -6,10 +6,8 @@ from django.conf import settings
 
 SECRET_KEY = settings.SECRET_KEY[:32]  # Use Django's secret key as a base
 
-
 def get_cipher():
   return Fernet(base64.urlsafe_b64encode(SECRET_KEY.ljust(32)[:32].encode()))
-
 
 class BaseModel(models.Model):
   created_at = models.DateTimeField(default=timezone.now, editable=False)
@@ -17,7 +15,6 @@ class BaseModel(models.Model):
 
   class Meta:
     abstract = True
-
 
 class Customers(BaseModel):
   name = models.CharField(max_length=100)
@@ -44,14 +41,12 @@ class Customers(BaseModel):
   def __str__(self):
     return self.name
 
-
 class CustomerData(BaseModel):
   customer = models.ForeignKey(Customers, on_delete=models.CASCADE)
   name = models.CharField(max_length=250)
 
   def __str__(self):
     return f'{self.customer_id}:{self.name}'
-
 
 class TurningPrediction(BaseModel):
   customer = models.ForeignKey(Customers, on_delete=models.CASCADE)
