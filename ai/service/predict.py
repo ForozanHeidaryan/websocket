@@ -1,126 +1,137 @@
+# ai/service/predict.py
 import os
 import re
-
 import joblib
 import numpy as np
-import pandas as pd
 from django.conf import settings
-from hazm import *
-from sklearn.feature_extraction.text import CountVectorizer
+from hazm import word_tokenize, Normalizer, stopwords_list, Stemmer
 from sklearn.metrics.pairwise import cosine_similarity
-
-from ai.models import CustomerData, TurningPrediction
 
 
 class PredictCustomersData:
-  def __init__(self):
-    self.__customer_data = CustomerData.objects.all()
-    self.__model_path = os.path.join(settings.MEDIA_ROOT, "models")
-    self.stopwords = set(stopwords_list())
-    self.stemmer = Stemmer()
-    self.normalizer = Normalizer()
-    self.vectorizer = CountVectorizer()
+    def __init__(self, input_payload):
+        """
+        input_payload: dict با دو کلید اصلی:
+          - "data": لیست دیکشنری‌ها {"Id":..., "Title":...}
+          - "mapping": dict اختیاری {"categories": [...], "sarfasls": [...], "grouhs": [...]}
+        """
+        self.normalizer = Normalizer()
+        self.stopwords = set(stopwords_list())
+        self.stemmer = Stemmer()
+        self.__model_path = os.path.join(settings.MEDIA_ROOT, "models")
 
-  def execute(self):
-    self.__predict_data()
+        if not isinstance(input_payload, dict):
+            raise ValueError("ورودی باید دیکشنری باشد.")
 
-  def __predict_data(self):
-    max_len = 0
-    preprocessed_texts = []
-    names = []
-    for customer in self.__customer_data:
-      names.append(customer.name)
-      customer.name = self.__remove_numbers(customer.name)
-      customer.name = self.__remove_spaces(customer.name)
-      customer.name = self.__preprocess_text(customer.name)
-      preprocessed_texts.append(customer.name)
-      max_len = max(len(customer.name), max_len)
+        self.data_list = input_payload.get("data", [])
+        if not isinstance(self.data_list, list):
+            raise ValueError("کلید 'data' باید لیست باشد.")
+        for item in self.data_list:
+            if "Title" not in item:
+                raise ValueError("هر آیتم در data باید فیلد 'Title' داشته باشد.")
 
-    preprocessed_texts = self.__create_matrix_from_texts(preprocessed_texts, max_len)
-    preprocessed_texts = np.where(np.array(preprocessed_texts) == None, '', np.array(preprocessed_texts))
+        self.mapping = input_payload.get("mapping", {}) or {}
 
-    cleaned_data1 = self.__remove_extra_data(preprocessed_texts)
+    def execute(self):
+        texts = [self._preprocess_to_string(item.get("Title", "")) for item in self.data_list]
+        ids = [item.get("Id") for item in self.data_list]
 
-    cleaned_data1 = pd.Series(cleaned_data1)
+        vec = self._load_joblib("vectorizer.joblib")
+        X = vec.transform(texts)
 
-    x_predict = pd.DataFrame({'name': cleaned_data1})
-    x_predict = self.__join_lists_to_string(x_predict, 'name')
+        # پیش‌بینی‌ها
+        rf1 = self._load_joblib("RF_model_y1.joblib")
+        enc1 = self._load_joblib("encoder1.joblib")
+        preds_cat = enc1.inverse_transform(rf1.predict(X))
 
-    loaded_vectorizer = self.__get_joblib_file('vectorizer.joblib')
-    vec_predict = loaded_vectorizer.transform(x_predict.name)
+        rf2 = self._load_joblib("RF_model_y2.joblib")
+        enc2 = self._load_joblib("encoder2.joblib")
+        preds_sar = enc2.inverse_transform(rf2.predict(X))
 
-    rf_modely_1 = self.__get_joblib_file("RF_model_y1.joblib")
-    rf_modely_1 = rf_modely_1.predict(vec_predict)
-    encoder1 = self.__get_joblib_file("encoder1.joblib")
-    turning = encoder1.inverse_transform(rf_modely_1)
+        rf3 = self._load_joblib("RF_model_y3.joblib")
+        enc3 = self._load_joblib("encoder3.joblib")
+        preds_gro = enc3.inverse_transform(rf3.predict(X))
 
-    rf_modely_2 = self.__get_joblib_file("RF_model_y2.joblib")
-    rf_modely_2 = rf_modely_2.predict(vec_predict)
-    encoder2 = self.__get_joblib_file("encoder2.joblib")
-    sarfasl = encoder2.inverse_transform(rf_modely_2)
+        # محاسبه similarity
+        try:
+            vec_train = self._load_joblib("vec_title.joblib")
+            sim = cosine_similarity(X, vec_train)
+            sim_scores = np.max(sim, axis=1).astype(float).tolist()
+        except Exception:
+            sim_scores = [None] * len(texts)
 
-    rf_modely_3 = self.__get_joblib_file("RF_model_y3.joblib")
-    rf_modely_3 = rf_modely_3.predict(vec_predict)
-    encoder3 = self.__get_joblib_file("encoder3.joblib")
-    account_group = encoder3.inverse_transform(rf_modely_3)
+        # ساخت نتایج اولیه فقط با Id و similarity
+        results = []
+        for i in range(len(texts)):
+            results.append({
+                "Id": ids[i],
+                "similarity": sim_scores[i],
+                "_pred_cat": preds_cat[i],
+                "_pred_sar": preds_sar[i],
+                "_pred_gro": preds_gro[i],
+            })
 
-    vec_train = self.__get_joblib_file('vec_title.joblib')
-    similarity = cosine_similarity(vec_predict, vec_train)
-    similarity = np.max(similarity, axis=1)
-    turning_predictions = pd.DataFrame(
-      {
-        'turning': turning,
-        'sarfasl': sarfasl,
-        'account_group': account_group,
-        'similarity': similarity,
-        'title': names
-      }
-    )
+        # mapping اختیاری: فقط IDهای متناظر را اضافه می‌کنیم
+        if self.mapping:
+            results = self._map_predictions_to_ids(results)
 
-    self.__insert_data(turning_predictions)
+        # حذف فیلدهای پیش‌بینی برای خروجی نهایی
+        for r in results:
+            r.pop("_pred_cat", None)
+            r.pop("_pred_sar", None)
+            r.pop("_pred_gro", None)
 
-  def __remove_numbers(self, text):
-    return re.sub(r'\d+', '0,1,2,3,4,5,6,7,8,9', text)
+        return results
 
-  def __remove_spaces(self, string):
-    return string.strip()
+    # ---------- توابع کمکی ----------
+    def _preprocess_to_string(self, text):
+        if text is None:
+            text = ""
+        text = self.normalizer.normalize(str(text))
+        text = text.replace("ي", "ی").replace("ى", "ی").replace("ك", "ک")
+        tokens = word_tokenize(text)
+        tokens = [t for t in tokens if t not in self.stopwords]
+        stems = [self.stemmer.stem(t) for t in tokens]
+        return " ".join(stems)
 
-  def __preprocess_text(self, text):
-    if isinstance(text, list):
-      text = "".join(text)
-    normalized_text = self.normalizer.normalize(text)
-    tokens = word_tokenize(normalized_text)
-    filtered_tokens = [token for token in tokens if token not in self.stopwords]
-    stemmed_tokens = [self.stemmer.stem(token) for token in filtered_tokens]
-    return stemmed_tokens
+    def _normalize_for_map(self, text):
+        if text is None:
+            return ""
+        s = str(text)
+        s = s.replace("ي", "ی").replace("ى", "ی").replace("ك", "ک")
+        s = s.replace("‌", " ")
+        s = re.sub(r"\s+", " ", s)
+        s = re.sub(r"[^\w\s]", "", s)
+        return s.strip().lower()
 
-  def __remove_extra_data(self, data):
-    return [[word for word in row if word] for row in data]
+    def _map_predictions_to_ids(self, results):
+        # ساخت دیکشنری mapping ها
+        def build_map(items, id_field, name_field):
+            m = {}
+            for x in items or []:
+                _id = x.get(id_field)
+                _name = x.get(name_field)
+                if _id is not None and _name:
+                    m[self._normalize_for_map(_name)] = _id
+            return m
 
-  def __create_matrix_from_texts(self, texts, max_len):
-    result = np.empty((len(texts), max_len), dtype=object)
-    for i, text in enumerate(texts):
-      processed_text = self.__preprocess_text(text)
-      result[i, :len(processed_text)] = processed_text
-    return result
+        cat_map = build_map(self.mapping.get("categories", []), "Category_id", "Category")
+        sar_map = build_map(self.mapping.get("sarfasls", []), "Sarfasl_id", "Sarfasl")
+        gro_map = build_map(self.mapping.get("grouhs", []), "Grouh_id", "Grouh")
 
-  def __insert_data(self, turning_predictions):
-      TurningPrediction.objects.all().delete()
-      objects = [
-          TurningPrediction(
-              turning=row["turning"],
-              sarfasl=row["sarfasl"],
-              account_group=row["account_group"],
-              similarity=row["similarity"],
-              title=row["title"]
-          )
-          for _, row in turning_predictions.iterrows()
-      ]
-      TurningPrediction.objects.bulk_create(objects)
+        enriched = []
+        for r in results:
+            enriched.append({
+                "Id": r["Id"],
+                "CategoryId": cat_map.get(self._normalize_for_map(r["_pred_cat"])),
+                "SarfaslId": sar_map.get(self._normalize_for_map(r["_pred_sar"])),
+                "GrouhId": gro_map.get(self._normalize_for_map(r["_pred_gro"])),
+                "similarity": r["similarity"],
+            })
+        return enriched
 
-  def __get_joblib_file(self, file_name):
-      return joblib.load(os.path.join(self.__model_path, file_name))
-
-  def __join_lists_to_string(self, df, column_name):
-      df[column_name] = [' '.join(row) for row in df[column_name]]
-      return df
+    def _load_joblib(self, filename):
+        path = os.path.join(self.__model_path, filename)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"فایل مدل یافت نشد: {path}")
+        return joblib.load(path)

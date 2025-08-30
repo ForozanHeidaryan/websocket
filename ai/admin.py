@@ -1,3 +1,4 @@
+
 from django import forms
 from django.contrib import admin
 from django.http import HttpResponseRedirect
@@ -7,7 +8,9 @@ from django.shortcuts import render, get_object_or_404
 from import_export import resources
 from import_export.admin import ImportExportModelAdmin
 
-from ai.models import Customers, CustomerData, Training
+from ai.models import Customers, CustomerData , Trainingn
+
+
 
 
 class CustomersAdminForm(forms.ModelForm):
@@ -84,11 +87,12 @@ class CustomerDataForm(forms.ModelForm):
 
 class TrainingResource(resources.ModelResource):
     class Meta:
-        model = Training
+        model = Trainingn
         fields = ('id', 'group', 'category', 'sarfasl', 'title')
 
 class TrainingAdmin(ImportExportModelAdmin):
     resource_class = TrainingResource
 
 admin.site.register(Customers, CustomersAdmin)
-admin.site.register(Training, TrainingAdmin)
+admin.site.register(Trainingn)
+
