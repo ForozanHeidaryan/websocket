@@ -1,137 +1,143 @@
-# ai/service/predict.py
 import os
-import re
 import joblib
-import numpy as np
-from django.conf import settings
-from hazm import word_tokenize, Normalizer, stopwords_list, Stemmer
-from sklearn.metrics.pairwise import cosine_similarity
+import re
+from hazm import Normalizer, word_tokenize, stopwords_list
+from rapidfuzz import fuzz
 
+# ------------------------------------------------------------------
+normalizer = Normalizer()
+stopwords = set(stopwords_list())
 
-class PredictCustomersData:
-    def __init__(self, input_payload):
-        """
-        input_payload: dict با دو کلید اصلی:
-          - "data": لیست دیکشنری‌ها {"Id":..., "Title":...}
-          - "mapping": dict اختیاری {"categories": [...], "sarfasls": [...], "grouhs": [...]}
-        """
-        self.normalizer = Normalizer()
-        self.stopwords = set(stopwords_list())
-        self.stemmer = Stemmer()
-        self.__model_path = os.path.join(settings.MEDIA_ROOT, "models")
+# ------------------------------------------------------------------
+# تابع نرمالایز دقیقاً مشابه train_catboost.py
+# ------------------------------------------------------------------
+def ultra_normalize(text: str) -> str:
+    if not text:
+        return ""
+    t = str(text)
+    t = t.replace("\u200c", "")
+    t = t.replace("ي", "ی").replace("ك", "ک").replace("ئ", "ی")
+    t = t.replace("\r", "").replace("\n", "").replace("\t", "")
+    t = normalizer.normalize(t)
+    t = re.sub(r'\s+', ' ', t)
+    t = re.sub(r'[^\w\s]', ' ', t)
+    t = re.sub(r'\s+', ' ', t).strip().lower()
+    return t
 
-        if not isinstance(input_payload, dict):
-            raise ValueError("ورودی باید دیکشنری باشد.")
+def preprocess_text(text: str) -> str:
+    t = ultra_normalize(text)
+    tokens = word_tokenize(t)
+    tokens = [tok for tok in tokens if tok not in stopwords and len(tok) > 1 and not tok.isdigit()]
+    return " ".join(tokens)
 
-        self.data_list = input_payload.get("data", [])
-        if not isinstance(self.data_list, list):
-            raise ValueError("کلید 'data' باید لیست باشد.")
-        for item in self.data_list:
-            if "Title" not in item:
-                raise ValueError("هر آیتم در data باید فیلد 'Title' داشته باشد.")
+# ------------------------------------------------------------------
+# لود vectorizer و مدل‌ها
+MODEL_DIR = os.path.join("media", "models")
+vectorizer = joblib.load(os.path.join(MODEL_DIR, "organizational_vectorizer.joblib"))
 
-        self.mapping = input_payload.get("mapping", {}) or {}
+models = {}
+encoders = {}
+for col in ["Category", "Grouh", "Sarfasl", "contorol"]:
+    model_path = os.path.join(MODEL_DIR, f"organizational_{col}_model.joblib")
+    enc_path = os.path.join(MODEL_DIR, f"organizational_{col}_encoder.joblib")
+    if os.path.exists(model_path) and os.path.exists(enc_path):
+        models[col] = joblib.load(model_path)
+        encoders[col] = joblib.load(enc_path)
 
-    def execute(self):
-        texts = [self._preprocess_to_string(item.get("Title", "")) for item in self.data_list]
-        ids = [item.get("Id") for item in self.data_list]
+# ------------------------------------------------------------------
+def predict_batch(input_json: dict):
+    data_rows = input_json.get("data", [])
+    mapping = input_json.get("mapping", {})
+    results = []
 
-        vec = self._load_joblib("vectorizer.joblib")
-        X = vec.transform(texts)
+    # مپینگ‌ها
+    grouhs_map = {ultra_normalize(g["Name"]): g["ID"] for g in mapping.get("grouhs", [])}
+    sarfasls_map = {ultra_normalize(s["Name"]): s["ID"] for s in mapping.get("sarfasls", [])}
+    categories_map = {str(c["Name"]).strip(): c["ID"] for c in mapping.get("categories", [])}
 
-        # پیش‌بینی‌ها
-        rf1 = self._load_joblib("RF_model_y1.joblib")
-        enc1 = self._load_joblib("encoder1.joblib")
-        preds_cat = enc1.inverse_transform(rf1.predict(X))
+    for row in data_rows:
+        input_id = row.get("ID")
+        title = row.get("Name", "")
+        clean_title = preprocess_text(title)
 
-        rf2 = self._load_joblib("RF_model_y2.joblib")
-        enc2 = self._load_joblib("encoder2.joblib")
-        preds_sar = enc2.inverse_transform(rf2.predict(X))
-
-        rf3 = self._load_joblib("RF_model_y3.joblib")
-        enc3 = self._load_joblib("encoder3.joblib")
-        preds_gro = enc3.inverse_transform(rf3.predict(X))
-
-        # محاسبه similarity
-        try:
-            vec_train = self._load_joblib("vec_title.joblib")
-            sim = cosine_similarity(X, vec_train)
-            sim_scores = np.max(sim, axis=1).astype(float).tolist()
-        except Exception:
-            sim_scores = [None] * len(texts)
-
-        # ساخت نتایج اولیه فقط با Id و similarity
-        results = []
-        for i in range(len(texts)):
+        if len(clean_title) < 2:
             results.append({
-                "Id": ids[i],
-                "similarity": sim_scores[i],
-                "_pred_cat": preds_cat[i],
-                "_pred_sar": preds_sar[i],
-                "_pred_gro": preds_gro[i],
+                "input_id": input_id,
+                "similarity": 0,
+                "Category": 0,
+                "Grouh": 0,
+                "Sarfasl": 0,
+                "Control": 0
             })
+            continue
 
-        # mapping اختیاری: فقط IDهای متناظر را اضافه می‌کنیم
-        if self.mapping:
-            results = self._map_predictions_to_ids(results)
+        X = vectorizer.transform([clean_title])
+        out = {
+            "input_id": input_id,
+            "similarity": 1.0,
+            "Category": 0,
+            "Grouh": 0,
+            "Sarfasl": 0,
+            "Control": 0
+        }
 
-        # حذف فیلدهای پیش‌بینی برای خروجی نهایی
-        for r in results:
-            r.pop("_pred_cat", None)
-            r.pop("_pred_sar", None)
-            r.pop("_pred_gro", None)
+        # Category
+        if "Category" in models:
+            try:
+                pred = encoders["Category"].inverse_transform(models["Category"].predict(X))[0]
+                pred_str = str(pred).strip()
+                if pred_str in categories_map:
+                    out["Category"] = categories_map[pred_str]
+            except:
+                pass
 
-        return results
+        # Grouh
+        if "Grouh" in models:
+            try:
+                pred_idx = models["Grouh"].predict(X)[0]
+                raw_pred = encoders["Grouh"].inverse_transform([pred_idx])[0]
+                key = ultra_normalize(raw_pred)
 
-    # ---------- توابع کمکی ----------
-    def _preprocess_to_string(self, text):
-        if text is None:
-            text = ""
-        text = self.normalizer.normalize(str(text))
-        text = text.replace("ي", "ی").replace("ى", "ی").replace("ك", "ک")
-        tokens = word_tokenize(text)
-        tokens = [t for t in tokens if t not in self.stopwords]
-        stems = [self.stemmer.stem(t) for t in tokens]
-        return " ".join(stems)
+                if key in grouhs_map:
+                    out["Grouh"] = grouhs_map[key]
+                else:
+                    # fallback fuzzy matchingy
+                    best = max(grouhs_map.items(), key=lambda x: fuzz.ratio(key, x[0]), default=(None, 0))
+                    if best[0] and fuzz.ratio(key, best[0]) >= 82:
+                        out["Grouh"] = best[1]
+            except:
+                pass
 
-    def _normalize_for_map(self, text):
-        if text is None:
-            return ""
-        s = str(text)
-        s = s.replace("ي", "ی").replace("ى", "ی").replace("ك", "ک")
-        s = s.replace("‌", " ")
-        s = re.sub(r"\s+", " ", s)
-        s = re.sub(r"[^\w\s]", "", s)
-        return s.strip().lower()
+        # Sarfasl
+        if "Sarfasl" in models:
+            try:
+                pred_idx = models["Sarfasl"].predict(X)[0]
+                raw_pred = encoders["Sarfasl"].inverse_transform([pred_idx])[0]
+                key = ultra_normalize(raw_pred)
 
-    def _map_predictions_to_ids(self, results):
-        # ساخت دیکشنری mapping ها
-        def build_map(items, id_field, name_field):
-            m = {}
-            for x in items or []:
-                _id = x.get(id_field)
-                _name = x.get(name_field)
-                if _id is not None and _name:
-                    m[self._normalize_for_map(_name)] = _id
-            return m
+                if key in sarfasls_map:
+                    out["Sarfasl"] = sarfasls_map[key]
+            except:
+                pass
 
-        cat_map = build_map(self.mapping.get("categories", []), "Category_id", "Category")
-        sar_map = build_map(self.mapping.get("sarfasls", []), "Sarfasl_id", "Sarfasl")
-        gro_map = build_map(self.mapping.get("grouhs", []), "Grouh_id", "Grouh")
 
-        enriched = []
-        for r in results:
-            enriched.append({
-                "Id": r["Id"],
-                "CategoryId": cat_map.get(self._normalize_for_map(r["_pred_cat"])),
-                "SarfaslId": sar_map.get(self._normalize_for_map(r["_pred_sar"])),
-                "GrouhId": gro_map.get(self._normalize_for_map(r["_pred_gro"])),
-                "similarity": r["similarity"],
-            })
-        return enriched
+        if "contorol" in models:
+            try:
+                pred = encoders["contorol"].inverse_transform(models["contorol"].predict(X))[0]
+                out["Control"] = int(pred) if str(pred).isdigit() else 0
+            except:
+                out["Control"] = 0
 
-    def _load_joblib(self, filename):
-        path = os.path.join(self.__model_path, filename)
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"فایل مدل یافت نشد: {path}")
-        return joblib.load(path)
+        results.append(out)
+
+    return {"status": "success", "result": {"organizational": results}}
+
+# ------------------------------------------------------------------
+class LightPredictor:
+    def __init__(self):
+        pass
+
+    def run(self, data, *args, **kwargs):
+        return predict_batch(data)
+
+    predict = run

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <title>تست WebSocket - HadiHesabAI</title>
+</head>
+<body style="font-family: sans-serif; direction: rtl;">
+
+<h2>🧠 تست WebSocket پیش‌بینی</h2>
+
+<label>ورودی مدل:</label>
+<input type="text" id="inputData" placeholder="مثلاً: 123,456" size="40">
+<button onclick="sendData()">ارسال</button>
+
+<pre id="output" style="background: #eee; padding: 10px; margin-top: 15px;"></pre>
+
+<script>
+    // اتصال به WebSocket
+    const socket = new WebSocket("ws://localhost:8000/ws/predict/");
+
+    socket.onopen = () => {
+        document.getElementById("output").textContent = "✅ اتصال برقرار شد...";
+    };
+
+    socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        document.getElementById("output").textContent += "\n📩 پاسخ: " + JSON.stringify(data, null, 2);
+    };
+
+    socket.onclose = () => {
+        document.getElementById("output").textContent += "\n❌ اتصال بسته شد.";
+    };
+
+    function sendData() {
+        const input = document.getElementById("inputData").value;
+        socket.send(JSON.stringify({input: input}));
+    }
+</script>
+
+</body>
+</html>

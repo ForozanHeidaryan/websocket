@@ -27,3 +27,30 @@ Thumbs.db
 
 # Coverage files
 .coverage
+
+
+# پوشه‌های مدل و فایل‌های حجیم
+media/
+catboost_info/
+
+# محیط مجازی
+.venv/
+env/
+venv/
+
+# فایل‌های موقت و کش
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Django
+*.sqlite3
+*.log
+/staticfiles/
+*.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.iml
