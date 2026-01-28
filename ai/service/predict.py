@@ -1,26 +1,26 @@
 import os
 import joblib
 import re
+import numpy as np
 from hazm import Normalizer, word_tokenize, stopwords_list
-from rapidfuzz import fuzz
+from difflib import get_close_matches
+from scipy.sparse import hstack, csr_matrix
 
 # ------------------------------------------------------------------
+# پیش‌پردازش متن (مطابق train_dual_rf.py)
 normalizer = Normalizer()
 stopwords = set(stopwords_list())
 
-# ------------------------------------------------------------------
-# تابع نرمالایز دقیقاً مشابه train_catboost.py
-# ------------------------------------------------------------------
 def ultra_normalize(text: str) -> str:
     if not text:
         return ""
     t = str(text)
-    t = t.replace("\u200c", "")
+    t = t.replace("\u200c", "").replace("\u200f", "")
     t = t.replace("ي", "ی").replace("ك", "ک").replace("ئ", "ی")
     t = t.replace("\r", "").replace("\n", "").replace("\t", "")
     t = normalizer.normalize(t)
     t = re.sub(r'\s+', ' ', t)
-    t = re.sub(r'[^\w\s]', ' ', t)
+    t = re.sub(r'[^\w\s\u0600-\u06FF0-9]', ' ', t)
     t = re.sub(r'\s+', ' ', t).strip().lower()
     return t
 
@@ -31,113 +31,159 @@ def preprocess_text(text: str) -> str:
     return " ".join(tokens)
 
 # ------------------------------------------------------------------
-# لود vectorizer و مدل‌ها
-MODEL_DIR = os.path.join("media", "models")
-vectorizer = joblib.load(os.path.join(MODEL_DIR, "organizational_vectorizer.joblib"))
+# نرمال‌سازی برچسب‌ها
+ARABIC_NUMS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
 
-models = {}
-encoders = {}
-for col in ["Category", "Grouh", "Sarfasl", "contorol"]:
-    model_path = os.path.join(MODEL_DIR, f"organizational_{col}_model.joblib")
-    enc_path = os.path.join(MODEL_DIR, f"organizational_{col}_encoder.joblib")
-    if os.path.exists(model_path) and os.path.exists(enc_path):
-        models[col] = joblib.load(model_path)
-        encoders[col] = joblib.load(enc_path)
+def normalize_label_strong(text: str) -> str:
+    if text is None:
+        return "نامشخص"
 
-# ------------------------------------------------------------------
-def predict_batch(input_json: dict):
-    data_rows = input_json.get("data", [])
-    mapping = input_json.get("mapping", {})
-    results = []
+    t = str(text)
+    t = ''.join(c for c in t if c.isprintable())
+    t = t.replace("\u200c", "").replace("\u200f", "")
+    t = t.replace("ي", "ی").replace("ك", "ک").replace("ئ", "ی")
+    t = t.replace("ۀ", "ه").replace("ة", "ه")
 
-    # مپینگ‌ها
-    grouhs_map = {ultra_normalize(g["Name"]): g["ID"] for g in mapping.get("grouhs", [])}
-    sarfasls_map = {ultra_normalize(s["Name"]): s["ID"] for s in mapping.get("sarfasls", [])}
-    categories_map = {str(c["Name"]).strip(): c["ID"] for c in mapping.get("categories", [])}
+    # تبدیل اعداد عربی و فارسی به انگلیسی
+    t = t.translate(ARABIC_NUMS)
 
-    for row in data_rows:
-        input_id = row.get("ID")
-        title = row.get("Name", "")
-        clean_title = preprocess_text(title)
-
-        if len(clean_title) < 2:
-            results.append({
-                "input_id": input_id,
-                "similarity": 0,
-                "Category": 0,
-                "Grouh": 0,
-                "Sarfasl": 0,
-                "Control": 0
-            })
-            continue
-
-        X = vectorizer.transform([clean_title])
-        out = {
-            "input_id": input_id,
-            "similarity": 1.0,
-            "Category": 0,
-            "Grouh": 0,
-            "Sarfasl": 0,
-            "Control": 0
-        }
-
-        # Category
-        if "Category" in models:
-            try:
-                pred = encoders["Category"].inverse_transform(models["Category"].predict(X))[0]
-                pred_str = str(pred).strip()
-                if pred_str in categories_map:
-                    out["Category"] = categories_map[pred_str]
-            except:
-                pass
-
-        # Grouh
-        if "Grouh" in models:
-            try:
-                pred_idx = models["Grouh"].predict(X)[0]
-                raw_pred = encoders["Grouh"].inverse_transform([pred_idx])[0]
-                key = ultra_normalize(raw_pred)
-
-                if key in grouhs_map:
-                    out["Grouh"] = grouhs_map[key]
-                else:
-                    # fallback fuzzy matchingy
-                    best = max(grouhs_map.items(), key=lambda x: fuzz.ratio(key, x[0]), default=(None, 0))
-                    if best[0] and fuzz.ratio(key, best[0]) >= 82:
-                        out["Grouh"] = best[1]
-            except:
-                pass
-
-        # Sarfasl
-        if "Sarfasl" in models:
-            try:
-                pred_idx = models["Sarfasl"].predict(X)[0]
-                raw_pred = encoders["Sarfasl"].inverse_transform([pred_idx])[0]
-                key = ultra_normalize(raw_pred)
-
-                if key in sarfasls_map:
-                    out["Sarfasl"] = sarfasls_map[key]
-            except:
-                pass
+    t = re.sub(r'[^\u0600-\u06FF0-9\s]', ' ', t)
 
 
-        if "contorol" in models:
-            try:
-                pred = encoders["contorol"].inverse_transform(models["contorol"].predict(X))[0]
-                out["Control"] = int(pred) if str(pred).isdigit() else 0
-            except:
-                out["Control"] = 0
+    t = re.sub(r'\s+', ' ', t).strip().lower()
 
-        results.append(out)
+    t = t.replace(' ', '')
 
-    return {"status": "success", "result": {"organizational": results}}
+    return t if t else "نامشخص"
+
+
+
+def normalize_category_preserve_numbers(val):
+    if val is None:
+        return "نامشخص"
+    return str(val).replace(" ", "").replace("\u200c", "")
 
 # ------------------------------------------------------------------
 class LightPredictor:
-    def __init__(self):
-        pass
+    """
+    Predictor سازگار با train_dual_rf.py
+    پشتیبانی هر دو جدول organizational و indexing
+    """
 
+    def __init__(self, table_name="organizational"):
+        assert table_name in ("organizational", "indexing")
+        self.table = table_name
+        self.model_dir = os.path.join("media", "models")
+
+        # vectorizer
+        self.vectorizer = joblib.load(os.path.join(self.model_dir, f"{table_name}_vectorizer.joblib"))
+
+        # models & encoders
+        self.models = {}
+        self.encoders = {}
+
+        for col in ["Category", "Grouh", "Sarfasl", "contorol"]:
+            model_path = os.path.join(self.model_dir, f"{table_name}_{col}_model.joblib")
+            encoder_path = os.path.join(self.model_dir, f"{table_name}_{col}_encoder.joblib")
+            if os.path.exists(model_path) and os.path.exists(encoder_path):
+                self.models[col] = joblib.load(model_path)
+                self.encoders[col] = joblib.load(encoder_path)
+
+    # ------------------------------------------------------------------
+    def predict_batch(self, payload: dict):
+        rows = payload.get("data", [])
+        mapping = payload.get("mapping", {})
+
+        # mapping dictionaries
+        grouhs_map = {normalize_label_strong(x["Name"]): x["ID"] for x in mapping.get("grouhs", [])}
+        sarfasls_map = {normalize_label_strong(x["Name"]): x["ID"] for x in mapping.get("sarfasls", [])}
+        categories_map = {normalize_category_preserve_numbers(x["Name"]): x["ID"] for x in mapping.get("categories", [])}
+        controls_map = {normalize_label_strong(x["Name"]): x["ID"] for x in mapping.get("contorol", [])}
+
+        # نگهداری Category سطح ۱ برای Level 2
+        level1_categories = {}
+
+        outputs = []
+
+        for row in rows:
+            rid = row.get("ID")
+            title = row.get("Name", "")
+            level = row.get("LevelNumber", 1)
+            parent_id = row.get("ParentId")
+
+            clean_title = preprocess_text(title)
+
+            out = {
+                "input_id": rid,
+                "Category": 0,
+                "Grouh": 0,
+                "Sarfasl": 0,
+                "Control": 0,
+                "similarity": 1.0
+            }
+
+            if len(clean_title) < 2:
+                outputs.append(out)
+                continue
+
+            X_text = self.vectorizer.transform([clean_title])
+
+            # --------------------------------------------------
+            # Level 1
+            if level == 1:
+                if "Category" in self.models:
+                    idx = self.models["Category"].predict(X_text)[0]
+                    cat_val = self.encoders["Category"].inverse_transform([idx])[0]
+                    cat_val = normalize_category_preserve_numbers(cat_val)
+
+                    level1_categories[rid] = cat_val
+                    if cat_val in categories_map:
+                        out["Category"] = categories_map[cat_val]
+
+                if "Grouh" in self.models:
+                    idx = self.models["Grouh"].predict(X_text)[0]
+                    val = normalize_label_strong(self.encoders["Grouh"].inverse_transform([idx])[0])
+                    if val in grouhs_map:
+                        out["Grouh"] = grouhs_map[val]
+
+                if "Sarfasl" in self.models:
+                    idx = self.models["Sarfasl"].predict(X_text)[0]
+                    val = normalize_label_strong(self.encoders["Sarfasl"].inverse_transform([idx])[0])
+                    if val in sarfasls_map:
+                        out["Sarfasl"] = sarfasls_map[val]
+
+            # --------------------------------------------------
+            # Level 2 — contorol
+            elif level == 2 and "contorol" in self.models:
+                parent_cat = level1_categories.get(parent_id, "0")
+
+                if self.table == "organizational":
+                    try:
+                        cat_feature = int(parent_cat)
+                    except:
+                        cat_feature = 0
+                else:  # indexing: حروف لاتین → عدد یکتا برای مدل
+                    cat_feature = hash(parent_cat) % 10**8
+
+                X_final = hstack([X_text, csr_matrix([[cat_feature]])])
+
+                idx = self.models["contorol"].predict(X_final)[0]
+                val = normalize_label_strong(self.encoders["contorol"].inverse_transform([idx])[0])
+
+                if val in controls_map:
+                    out["Control"] = controls_map[val]
+                else:
+                    close = get_close_matches(val, list(controls_map.keys()), n=1, cutoff=0.88)
+                    if close:
+                        out["Control"] = controls_map[close[0]]
+
+            outputs.append(out)
+
+        return {"status": "success", "result": {self.table: outputs}}
+
+    # ------------------------------------------------------------------
+    # API compatibility
     def run(self, data, *args, **kwargs):
-        return predict_batch(data)
+        return self.predict_batch(data)
 
     predict = run

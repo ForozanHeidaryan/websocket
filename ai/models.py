@@ -28,9 +28,10 @@ class Organizational(BaseModel):
     Sarfasl = models.CharField(max_length=250)
     contorol = models.CharField(max_length=250)
     Title = models.CharField(max_length=250)
+    LevelNumber = models.IntegerField()
 
     class Meta:
-        db_table = 't1'
+        db_table = 'orgenizedite1'
         managed = False
 
     def __str__(self):
@@ -39,16 +40,17 @@ class Organizational(BaseModel):
 
 # ---------------------- Indexing ----------------------
 
-"""class Indexing(BaseModel):
+class Indexing(BaseModel):
     id = models.AutoField(primary_key=True)
     Grouh = models.CharField(max_length=150)
     Category = models.CharField(max_length=250)
     Sarfasl = models.CharField(max_length=250)
     contorol = models.CharField(max_length=250)
     Title = models.CharField(max_length=250)
+    LevelNumber = models.IntegerField()
 
     class Meta:
-        db_table = 'ind1'
+        db_table = 'indexedit1'
         managed = False
 
     def __str__(self):
