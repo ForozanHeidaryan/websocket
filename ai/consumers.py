@@ -9,9 +9,6 @@ from ai.service.predict import LightPredictor  # مسیر خودت رو چک ک�
 class PredictionConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         await self.accept()
-        # یک بار مدل رو لود می‌کنیم تا هر درخواست سریع باشه
-        self.predictor = LightPredictor()
-
         await self.send(text_data=json.dumps({
             "message": "WebSocket connection established"
         }))
@@ -25,8 +22,7 @@ class PredictionConsumer(AsyncWebsocketConsumer):
 
             # ──────── بررسی کلید امنیتی ────────
             received_secret = payload.get("SECRET_KEY") or payload.get("secret")
-            expected_secret = getattr(settings, "PREDICT_SECRET_KEY", "123")  # اگه تو settings نبود، 123 قبول می‌شه
-
+            expected_secret = getattr(settings, "PREDICT_SECRET_KEY", "123")
             if received_secret != expected_secret:
                 await self.send(text_data=json.dumps({
                     "error": "Invalid secret key"
@@ -41,10 +37,12 @@ class PredictionConsumer(AsyncWebsocketConsumer):
                 }))
                 return
 
-            # ──────── ساخت payload کامل برای predict.py ────────
+            # ──────── ساخت instance مناسب از LightPredictor ────────
+            predictor = LightPredictor(table_name=mode)
+
+            # ──────── آماده‌سازی payload برای predictor ────────
             input_for_predictor = {
                 "data": payload.get("data", []),
-                # حتی اگه با حرف بزرگ یا اسم قدیمی فرستاده باشه، قبول می‌کنه
                 "control": (
                     payload.get("control") or
                     payload.get("Control") or
@@ -57,9 +55,7 @@ class PredictionConsumer(AsyncWebsocketConsumer):
             }
 
             # ──────── اجرای مدل در ترد جدا (غیرمسدودکننده) ────────
-            prediction_result = await sync_to_async(self.predictor.predict)(
-                input_for_predictor, mode
-            )
+            prediction_result = await sync_to_async(predictor.predict)(input_for_predictor)
 
             # ──────── ارسال نتیجه به فرانت‌اند ────────
             await self.send(text_data=json.dumps({

@@ -20,15 +20,14 @@ asgiref
 daphne
 fuzzywuzzy
 rapidfuzz
-catboost
-scikit-learn
-pandas
-joblib
-sqlite3
-postgresql
-daphne
-celery
-channels
+mssql-django
+pyodbc
+scipy
+
+
+
+
+
 
 
 
