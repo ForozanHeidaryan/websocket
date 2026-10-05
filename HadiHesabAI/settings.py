@@ -101,20 +101,6 @@ ASGI_APPLICATION = 'HadiHesabAI.asgi.application'
 # ------------------------------------------
 # Database  (بدون تغییر)
 # ------------------------------------------
-DATABASES = {
-    'default': {
-        'ENGINE': 'mssql',
-        'NAME': 'ai',
-        'USER': 'sa',
-        'PASSWORD': 'a@12345',
-        'HOST': 'SRV9712616901',
-        'PORT': '1433',
-        'OPTIONS': {
-            'driver': 'ODBC Driver 17 for SQL Server',
-            'extra_params': 'TrustServerCertificate=yes',
-        },
-    }
-}
 
 # ------------------------------------------
 # Channels & WebSocket
